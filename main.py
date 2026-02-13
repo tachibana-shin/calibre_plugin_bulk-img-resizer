@@ -18,6 +18,21 @@ from calibre_plugins.bulk_img_resizer.ui import ConfigDialog
 from calibre_plugins.bulk_img_resizer.image import compress_image
 
 
+def get_image_type(data):
+    if len(data) < 12:
+        return None
+    
+    if data.startswith(b'\xff\xd8\xff'):
+        return 'jpeg'
+    if data.startswith(b'\x89PNG\r\n\x1a\n'):
+        return 'png'
+    if data.startswith(b'GIF87a') or data.startswith(b'GIF89a'):
+        return 'gif'
+    if data.startswith(b'RIFF') and data[8:12] == b'WEBP':
+        return 'webp'
+    return None
+
+
 def replace_extension(file_name, new_extension):
     base_name, _ = os.path.splitext(file_name)
     return base_name + new_extension
@@ -29,7 +44,7 @@ class BulkImgReducer(Tool):
     allowed_in_menu = True
     default_shortcut = ('Ctrl+Shift+Alt+R',)
 
-    RASTER_IMAGES = {JPEG_MIME, PNG_MIME, WEBP_MIME, GIF_MIME}
+    # RASTER_IMAGES = {JPEG_MIME, PNG_MIME, WEBP_MIME, GIF_MIME}
 
     def __init__(self):
         self.config = None
@@ -76,11 +91,15 @@ class BulkImgReducer(Tool):
 
     def get_images_from_collection(self, container):
         images = []
-        for name, media_type in container.mime_map.items():
-            if media_type in self.RASTER_IMAGES:
-                # print('files: ' + str(name) + ' mime types:' + str(media_type))
-                images.append(name)
-
+        for name in container.mime_map:
+            try:
+                with container.open(name) as f:
+                    header = f.read(12)
+                
+                if get_image_type(header):
+                    images.append(name)
+            except Exception:
+                continue
         return images
 
     def create_progres_dialog(self, image_count):
@@ -100,7 +119,9 @@ class BulkImgReducer(Tool):
             return
         name = images.pop()
         try:
-            new_image = compress_image(container.parsed(name), max_resolution, quality, encoding_type)
+            # Use raw_data to ensure we get bytes, especially for extensionless files
+            # that Calibre might misclassify as text.
+            new_image = compress_image(container.raw_data(name), max_resolution, quality, encoding_type)
             container.replace(name, new_image)
         except Exception:
             import traceback
